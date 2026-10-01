@@ -21,6 +21,12 @@ class REST_API {
 	public function handle_import( \WP_REST_Request $request ) {
 		$channel = $request->get_param( 'channel' );
 		
+		// Prüfe, ob der Kanal aktiv ist
+		$active_adapters = get_option( 'oz_channels_active_adapters', [] );
+		if ( empty( $active_adapters[ $channel ] ) ) {
+			return new \WP_Error( 'inactive_channel', 'Dieser Vertriebskanal ist in den Einstellungen deaktiviert.', [ 'status' => 403 ] );
+		}
+
 		$adapter = $this->get_adapter( $channel );
 		if ( ! $adapter ) {
 			return new \WP_Error( 'invalid_channel', 'Der angegebene Vertriebskanal wird nicht unterstützt.', [ 'status' => 400 ] );
