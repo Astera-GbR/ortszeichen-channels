@@ -46,6 +46,7 @@ class REST_API {
 
 		// 3. Normalisieren
 		$normalized_data = $adapter->normalize_payload( $payload );
+		$normalized_data['channel'] = $channel;
 
 		// 4. Order anlegen
 		$importer = new Order_Importer();

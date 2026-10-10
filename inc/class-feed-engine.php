@@ -33,20 +33,7 @@ class Feed_Engine {
 			return new \WP_Error( 'inactive_channel', 'Kanal ist deaktiviert.', [ 'status' => 403 ] );
 		}
 
-		$feed_mode = get_option( 'oz_channels_feed_mode', 'live' );
-		
-		if ( $feed_mode === 'static' ) {
-			$upload_dir = wp_upload_dir();
-			$file_path  = $upload_dir['basedir'] . '/oz-feeds/' . $channel . '.json';
-			$file_url   = $upload_dir['baseurl'] . '/oz-feeds/' . $channel . '.json';
-
-			if ( file_exists( $file_path ) ) {
-				// Redirect to static file
-				wp_redirect( $file_url );
-				exit;
-			}
-		}
-
+		// Always rebuild after current approval checks; public static snapshots cannot revoke products.
 		// Live generieren
 		$data = $this->generate_feed_data( $channel );
 		return new \WP_REST_Response( $data, 200 );
@@ -67,20 +54,8 @@ class Feed_Engine {
 	}
 
 	public function generate_static_file( $channel ) {
-		if ( ! $this->is_channel_active( $channel ) ) {
-			return;
-		}
-
-		$data = $this->generate_feed_data( $channel );
-		
-		$upload_dir = wp_upload_dir();
-		$feed_dir   = $upload_dir['basedir'] . '/oz-feeds';
-		if ( ! file_exists( $feed_dir ) ) {
-			mkdir( $feed_dir, 0755, true );
-		}
-
-		$file_path = $feed_dir . '/' . $channel . '.json';
-		file_put_contents( $file_path, wp_json_encode( $data, JSON_PRETTY_PRINT ) );
+		// Public static export is disabled until private, revocation-aware storage is implemented.
+		return new \WP_Error( 'static_export_unavailable', 'Bitte den authentifizierten Live-Feed verwenden.' );
 	}
 
 	private function generate_feed_data( $channel ): array {
