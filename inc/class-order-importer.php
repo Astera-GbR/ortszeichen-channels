@@ -18,6 +18,16 @@ class Order_Importer {
 			return new \WP_Error( 'no_items', 'Bestellung hat keine Artikel.' );
 		}
 
+		// Imported payloads do not establish payment or permission to manufacture.
+		if ( empty( $data['channel_order_id'] ) ) { return new \WP_Error( 'missing_identity', 'Externe Bestellkennung fehlt.' ); }
+		$existing = wc_get_orders( array( 'limit' => 1, 'meta_key' => '_oz_channel_order_id', 'meta_value' => $data['channel_order_id'] ) );
+		if ( $existing ) { return $existing[0]->get_id(); }
+		foreach ( $data['items'] as $line ) {
+			$product = wc_get_product( wc_get_product_id_by_sku( $line['sku'] ?? '' ) );
+			if ( ! $product || ! $product->is_purchasable() || ! $product->is_in_stock() || ! is_numeric( $line['quantity'] ?? null ) || $line['quantity'] < 1 || floor( $line['quantity'] ) != $line['quantity'] || ! is_numeric( $line['price'] ?? null ) || ! is_finite( (float) $line['price'] ) || $line['price'] <= 0 || ! empty( $line['location_meta'] ) ) {
+				return new \WP_Error( 'unapproved_item', 'Unbekannter, ungeprüfter oder personalisierter Artikel.' );
+			}
+		}
 		$order = wc_create_order();
 		if ( is_wp_error( $order ) ) {
 			return $order;
@@ -83,7 +93,7 @@ class Order_Importer {
 		$order->calculate_totals();
 		
 		// Status auf Processing setzen -> Das feuert den Webhook an Gelato (Print-Engine)!
-		$order->update_status( 'processing', 'Importiert via ORTSZEICHEN Channels (ID: ' . $data['channel_order_id'] . ').' );
+		$order->update_status( 'on-hold', 'Importiert via ORTSZEICHEN Channels (ID: ' . $data['channel_order_id'] . ').' );
 		
 		return $order->get_id();
 	}

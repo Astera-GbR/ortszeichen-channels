@@ -14,7 +14,7 @@ class REST_API {
 		register_rest_route( 'ortszeichen-channels/v1', '/order/import/(?P<channel>[a-zA-Z0-9-]+)', [
 			'methods'             => \WP_REST_Server::CREATABLE,
 			'callback'            => [ $this, 'handle_import' ],
-			'permission_callback' => '__return_true', // Validierung passiert im Adapter
+			'permission_callback' => static fn() => current_user_can( 'manage_woocommerce' ), // Validierung passiert im Adapter
 		] );
 	}
 
