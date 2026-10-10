@@ -22,7 +22,7 @@ class Feed_Engine {
 		register_rest_route( 'ortszeichen-channels/v1', '/feed/(?P<channel>[a-zA-Z0-9-]+)', [
 			'methods'             => \WP_REST_Server::READABLE,
 			'callback'            => [ $this, 'serve_live_feed' ],
-			'permission_callback' => '__return_true', // Feed ist öffentlich (kann mit API-Key gesichert werden)
+			'permission_callback' => static fn() => current_user_can( 'manage_woocommerce' ), // Feed ist öffentlich (kann mit API-Key gesichert werden)
 		] );
 	}
 
@@ -33,20 +33,7 @@ class Feed_Engine {
 			return new \WP_Error( 'inactive_channel', 'Kanal ist deaktiviert.', [ 'status' => 403 ] );
 		}
 
-		$feed_mode = get_option( 'oz_channels_feed_mode', 'live' );
-		
-		if ( $feed_mode === 'static' ) {
-			$upload_dir = wp_upload_dir();
-			$file_path  = $upload_dir['basedir'] . '/oz-feeds/' . $channel . '.json';
-			$file_url   = $upload_dir['baseurl'] . '/oz-feeds/' . $channel . '.json';
-
-			if ( file_exists( $file_path ) ) {
-				// Redirect to static file
-				wp_redirect( $file_url );
-				exit;
-			}
-		}
-
+		// Always rebuild after current approval checks; public static snapshots cannot revoke products.
 		// Live generieren
 		$data = $this->generate_feed_data( $channel );
 		return new \WP_REST_Response( $data, 200 );
@@ -67,20 +54,8 @@ class Feed_Engine {
 	}
 
 	public function generate_static_file( $channel ) {
-		if ( ! $this->is_channel_active( $channel ) ) {
-			return;
-		}
-
-		$data = $this->generate_feed_data( $channel );
-		
-		$upload_dir = wp_upload_dir();
-		$feed_dir   = $upload_dir['basedir'] . '/oz-feeds';
-		if ( ! file_exists( $feed_dir ) ) {
-			mkdir( $feed_dir, 0755, true );
-		}
-
-		$file_path = $feed_dir . '/' . $channel . '.json';
-		file_put_contents( $file_path, wp_json_encode( $data, JSON_PRETTY_PRINT ) );
+		// Public static export is disabled until private, revocation-aware storage is implemented.
+		return new \WP_Error( 'static_export_unavailable', 'Bitte den authentifizierten Live-Feed verwenden.' );
 	}
 
 	private function generate_feed_data( $channel ): array {
@@ -90,20 +65,28 @@ class Feed_Engine {
 		$args = [
 			'status' => 'publish',
 			'limit'  => -1,
+			'type' => array( 'simple', 'variation' ),
 		];
 		$products = wc_get_products( $args );
 
 		$feed = [];
 		foreach ( $products as $product ) {
+			if ( ! $product->is_purchasable() || ! $product->is_in_stock() || '' === $product->get_sku() ) { continue; }
 			$base_price = (float) $product->get_price();
 			$channel_price = Price_Calculator::apply_formula( $base_price, $formula );
 
+			if ( ! is_finite( $channel_price ) || $channel_price <= 0 || ! class_exists( '\\Ortszeichen\\Pricing' ) ) { continue; }
+			$costs = $product->get_meta( '_oz_verified_costs', true );
+			$costs = is_array( $costs ) ? $costs : array();
+			if ( ( $costs['channel'] ?? '' ) !== $channel || ( $costs['currency'] ?? '' ) !== get_woocommerce_currency() || ( $costs['supplier_sku'] ?? '' ) !== $product->get_meta( '_oz_supplier_sku', true ) ) { continue; }
+			$costs['gross_price'] = $channel_price;
+			if ( ! \Ortszeichen\Pricing::evaluate( $costs )['eligible'] ) { continue; }
 			$feed[] = [
 				'sku'          => $product->get_sku(),
 				'title'        => $product->get_name(),
 				'url'          => $product->get_permalink(),
 				'image'        => wp_get_attachment_url( $product->get_image_id() ),
-				'stock'        => $product->get_stock_quantity() ?? 'in_stock',
+				'stock'        => $product->get_stock_status(),
 				'base_price'   => $base_price,
 				'channel_price'=> $channel_price,
 				'currency'     => get_woocommerce_currency()
@@ -119,6 +102,6 @@ class Feed_Engine {
 
 	private function is_channel_active( $channel ): bool {
 		$active_adapters = get_option( 'oz_channels_active_adapters', [] );
-		return isset( $active_adapters[ $channel ] ) && $active_adapters[ $channel ] === '1';
+		return in_array( $channel, array( 'amazon', 'etsy' ), true ) && isset( $active_adapters[ $channel ] ) && $active_adapters[ $channel ] === '1';
 	}
 }

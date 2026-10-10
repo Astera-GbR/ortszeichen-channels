@@ -14,10 +14,30 @@ class Order_Importer {
 	 * @return int|\WP_Error Order ID bei Erfolg, sonst Fehler
 	 */
 	public function import_order( array $data ) {
+		if ( empty( $data['channel_order_id'] ) ) { return new \WP_Error( 'missing_identity', 'Externe Bestellkennung fehlt.' ); }
+		$lock = 'oz_channel_import_' . hash( 'sha256', ( $data['channel'] ?? 'external' ) . ':' . $data['channel_order_id'] );
+		// add_option uses the unique option_name index: simultaneous requests cannot both enter.
+		if ( ! add_option( $lock, time(), '', false ) ) { return new \WP_Error( 'import_locked', 'Import läuft oder benötigt manuelle Wiederherstellung.', array( 'status' => 409 ) ); }
+		try { return $this->import_locked( $data ); }
+		finally { delete_option( $lock ); }
+	}
+
+	private function import_locked( array $data ) {
 		if ( empty( $data['items'] ) ) {
 			return new \WP_Error( 'no_items', 'Bestellung hat keine Artikel.' );
 		}
 
+		// Imported payloads do not establish payment or permission to manufacture.
+		if ( empty( $data['channel_order_id'] ) ) { return new \WP_Error( 'missing_identity', 'Externe Bestellkennung fehlt.' ); }
+		$identity = hash( 'sha256', ( $data['channel'] ?? 'external' ) . ':' . $data['channel_order_id'] );
+		$existing = wc_get_orders( array( 'limit' => 1, 'meta_key' => '_oz_channel_external_key', 'meta_value' => $identity ) );
+		if ( $existing ) { return $existing[0]->get_id(); }
+		foreach ( $data['items'] as $line ) {
+			$product = wc_get_product( wc_get_product_id_by_sku( $line['sku'] ?? '' ) );
+			if ( ! $product || ! $product->is_purchasable() || ! $product->is_in_stock() || ! is_numeric( $line['quantity'] ?? null ) || $line['quantity'] < 1 || floor( $line['quantity'] ) != $line['quantity'] || ! is_numeric( $line['price'] ?? null ) || ! is_finite( (float) $line['price'] ) || $line['price'] <= 0 || ! empty( $line['location_meta'] ) ) {
+				return new \WP_Error( 'unapproved_item', 'Unbekannter, ungeprüfter oder personalisierter Artikel.' );
+			}
+		}
 		$order = wc_create_order();
 		if ( is_wp_error( $order ) ) {
 			return $order;
@@ -38,7 +58,8 @@ class Order_Importer {
 		$order->set_address( $address, 'shipping' );
 
 		// Metadaten fÃ¼r Channel Tracking
-		$order->update_meta_data( '_oz_channel', 'external' );
+		$order->update_meta_data( '_oz_channel', $data['channel'] ?? 'external' );
+		$order->update_meta_data( '_oz_channel_external_key', $identity );
 		$order->update_meta_data( '_oz_channel_order_id', $data['channel_order_id'] ?? '' );
 
 		// Artikel hinzufÃ¼gen
@@ -83,7 +104,7 @@ class Order_Importer {
 		$order->calculate_totals();
 		
 		// Status auf Processing setzen -> Das feuert den Webhook an Gelato (Print-Engine)!
-		$order->update_status( 'processing', 'Importiert via ORTSZEICHEN Channels (ID: ' . $data['channel_order_id'] . ').' );
+		$order->update_status( 'on-hold', 'Importiert via ORTSZEICHEN Channels (ID: ' . $data['channel_order_id'] . ').' );
 		
 		return $order->get_id();
 	}

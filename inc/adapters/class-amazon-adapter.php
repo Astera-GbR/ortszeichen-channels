@@ -21,7 +21,8 @@ class Amazon_Adapter implements Channel_Adapter_Interface {
 
 	public function validate_request( \WP_REST_Request $request ) {
 		$api_key = $request->get_header( 'X-Amazon-Webhook-Secret' );
-		if ( $api_key !== get_option( 'oz_channels_amazon_secret', 'DEFAULT_SECRET' ) ) {
+		$secret = (string) get_option( 'oz_channels_amazon_secret', '' );
+		if ( strlen( $secret ) < 32 || ! is_string( $api_key ) || ! hash_equals( $secret, $api_key ) ) {
 			return new \WP_Error( 'forbidden', 'Invalid API key for Amazon channel', [ 'status' => 403 ] );
 		}
 		return true;
