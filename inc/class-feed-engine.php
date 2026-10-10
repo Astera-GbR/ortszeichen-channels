@@ -76,7 +76,10 @@ class Feed_Engine {
 			$channel_price = Price_Calculator::apply_formula( $base_price, $formula );
 
 			if ( ! is_finite( $channel_price ) || $channel_price <= 0 || ! class_exists( '\\Ortszeichen\\Pricing' ) ) { continue; }
-			$costs = $product->get_meta( '_oz_verified_costs', true );
+			$profiles = $product->get_meta( '_oz_channel_costs', true );
+			if ( is_string( $profiles ) ) { $profiles = json_decode( $profiles, true ); }
+			$costs = is_array( $profiles ) && isset( $profiles[$channel] ) ? $profiles[$channel] : $product->get_meta( '_oz_verified_costs', true );
+			if ( is_string( $costs ) ) { $costs = json_decode( $costs, true ); }
 			$costs = is_array( $costs ) ? $costs : array();
 			if ( ( $costs['channel'] ?? '' ) !== $channel || ( $costs['currency'] ?? '' ) !== get_woocommerce_currency() || ( $costs['supplier_sku'] ?? '' ) !== $product->get_meta( '_oz_supplier_sku', true ) ) { continue; }
 			$costs['gross_price'] = $channel_price;
